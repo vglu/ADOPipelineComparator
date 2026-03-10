@@ -1,0 +1,180 @@
+@page "/sites"
+@inject IOrganizationService OrganizationService
+@inject IAdoSiteService AdoSiteService
+@inject IAdoService AdoService
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>ADO Project Sites</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">ADO Project Sites</MudText>
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-2" />
+}
+
+@if (_organizations.Count == 0 && !_isLoading)
+{
+    <MudAlert Severity="Severity.Info">
+        No organizations configured yet. Go to <MudLink Href="/organizations">Organizations</MudLink> to add one first.
+    </MudAlert>
+}
+else
+{
+    @foreach (var org in _organizations)
+    {
+        <MudPaper Class="pa-3 mb-4 qa-sites-org-panel" id="@($"org-panel-{org.Id}")">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.h6">@org.Name</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-2">@org.OrganizationUrl</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Outlined"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Sync"
+                           Class="@($"qa-sites-sync-btn qa-sites-sync-btn-{org.Id}")"
+                           Disabled="@_syncingOrgIds.Contains(org.Id)"
+                           OnClick="() => SyncAsync(org.Id)">
+                    @(_syncingOrgIds.Contains(org.Id) ? "Syncing..." : "Sync from ADO")
+                </MudButton>
+            </MudStack>
+
+            @{ var sites = _sitesByOrg.TryGetValue(org.Id, out var s) ? s : new List<AdoSiteViewModel>(); }
+
+            @if (sites.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    No project sites synced yet. Click "Sync from ADO" to discover projects.
+                </MudText>
+            }
+            else
+            {
+                <MudTable T="AdoSiteViewModel" Items="sites" Dense="true" Hover="true" Elevation="0" Class="qa-sites-table">
+                    <HeaderContent>
+                        <MudTh>Project</MudTh>
+                        <MudTh>Active</MudTh>
+                        <MudTh>Updated (UTC)</MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Project">@context.ProjectName</MudTd>
+                        <MudTd DataLabel="Active">
+                            <MudSwitch Value="context.IsActive"
+                                       Color="Color.Primary"
+                                       T="bool"
+                                       ValueChanged="(bool v) => SetActiveAsync(context.Id, v)" />
+                        </MudTd>
+                        <MudTd DataLabel="Updated (UTC)">@context.UpdatedAtUtc.ToString("u")</MudTd>
+                        <MudTd DataLabel="Actions">
+                            <MudButton Variant="Variant.Text"
+                                       Color="Color.Error"
+                                       Size="Size.Small"
+                                       Class="@($"qa-sites-delete-btn qa-sites-delete-btn-{context.Id}")"
+                                       OnClick="() => DeleteAsync(context)">Delete</MudButton>
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    }
+}
+
+@code {
+    private bool _isLoading;
+    private List<OrganizationViewModel> _organizations = new();
+    private Dictionary<int, List<AdoSiteViewModel>> _sitesByOrg = new();
+    private HashSet<int> _syncingOrgIds = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            _organizations = await OrganizationService.GetAllAsync();
+            var allSites = await AdoSiteService.GetAllAsync();
+            _sitesByOrg = allSites
+                .GroupBy(s => s.OrganizationId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(x => x.ProjectName).ToList());
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SyncAsync(int organizationId)
+    {
+        _syncingOrgIds.Add(organizationId);
+        StateHasChanged();
+
+        try
+        {
+            var (sites, errors) = await AdoService.SyncSitesFromAdoAsync(organizationId);
+            Snackbar.Add($"Synced {sites.Count} project site(s).", Severity.Success);
+
+            foreach (var error in errors)
+            {
+                Snackbar.Add(error, Severity.Warning);
+            }
+
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Sync failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _syncingOrgIds.Remove(organizationId);
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetActiveAsync(int siteId, bool isActive)
+    {
+        try
+        {
+            await AdoSiteService.SetActiveAsync(siteId, isActive);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to update active state: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task DeleteAsync(AdoSiteViewModel site)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Delete project site",
+            $"Delete '{site.ProjectName}' from '{site.OrganizationName}'? This will also remove all its cached pipelines.",
+            yesText: "Delete",
+            noText: "Cancel");
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await AdoSiteService.DeleteAsync(site.Id);
+            Snackbar.Add("Site deleted.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+}

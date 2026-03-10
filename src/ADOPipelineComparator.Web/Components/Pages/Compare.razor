@@ -1,0 +1,418 @@
+@page "/compare"
+@inject IAdoService AdoService
+@inject ICompareService CompareService
+@inject ICompareExportService CompareExportService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@inject ISnackbar Snackbar
+
+<PageTitle>Compare</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-3">Compare Pipelines</MudText>
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-3" />
+}
+
+@if (_selectedPipelines.Select(x => x.PipelineSubtype).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-3">
+        Pipelines of different definition types are compared with limited fields.
+    </MudAlert>
+}
+
+<MudPaper Class="pa-3 mb-3 qa-compare-panel">
+
+    <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="3" AlignItems="AlignItems.Stretch" Class="mb-3">
+        @foreach (var pipeline in _selectedPipelines)
+        {
+            <MudCard Style="min-width:210px; max-width:290px;" Elevation="2"
+                     Class="@($"qa-pipeline-compare-card qa-pipeline-compare-card-{pipeline.Id}")">
+                <MudCardHeader Class="pb-1">
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.subtitle1" Style="line-height:1.3;">@pipeline.PipelineName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@pipeline.OrganizationName</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@pipeline.Project</MudText>
+                    </CardHeaderContent>
+                    <CardHeaderActions>
+                        <MudIconButton Class="@($"qa-compare-remove-btn qa-compare-remove-btn-{pipeline.Id}")"
+                                       Icon="@Icons.Material.Filled.Close"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       aria-label="Remove from comparison"
+                                       OnClick="() => RemovePipelineAsync(pipeline.Id)" />
+                    </CardHeaderActions>
+                </MudCardHeader>
+                <MudCardActions Class="pt-0">
+                    <MudButton Size="Size.Small" Color="Color.Info" Variant="Variant.Text"
+                               Href="@pipeline.PipelineUrl" Target="_blank"
+                               Class="@($"qa-compare-open-btn qa-compare-open-btn-{pipeline.Id}")">
+                        Open in ADO
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+
+        <MudCard Style="min-width:500px; border: 2px dashed rgba(0,0,0,0.2);"
+                 Elevation="0" Class="qa-compare-add-card">
+            <MudCardContent>
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Add pipeline</MudText>
+
+                @if (_lookupOpen)
+                {
+                    <div @onclick="CloseLookup"
+                         style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:1299;background:transparent" />
+                }
+
+                <div style="position:relative">
+                    <MudTextField T="string"
+                                  Value="_addSearchText"
+                                  ValueChanged="OnAddSearchChanged"
+                                  Label="Type to search..."
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Dense="true"
+                                  Immediate="true"
+                                  Adornment="Adornment.End"
+                                  AdornmentIcon="@Icons.Material.Filled.Search"
+                                  @onfocus="OpenLookup"
+                                  Class="qa-compare-add-search" />
+
+                    @if (_lookupOpen)
+                    {
+                        <MudPaper Elevation="8" @onclick:stopPropagation="true"
+                                  Style="position:absolute;top:100%;left:0;z-index:1300;min-width:560px;max-height:380px;overflow-y:auto">
+                            <MudSimpleTable Dense="true" Hover="true" Style="width:100%">
+                                <thead>
+                                    <tr style="position:sticky;top:0;background:var(--mud-palette-surface);z-index:1">
+                                        <th style="width:90px">Type</th>
+                                        <th>Pipeline Name</th>
+                                        <th>Organization</th>
+                                        <th>Project</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{ var lookupItems = LookupResults; }
+                                    @if (lookupItems.Count == 0)
+                                    {
+                                        <tr><td colspan="4" style="padding:12px;color:gray">No pipelines found.</td></tr>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var p in lookupItems)
+                                        {
+                                            var captured = p;
+                                            <tr style="cursor:pointer" @onclick="() => SelectFromLookup(captured)" @onclick:stopPropagation="true">
+                                                <td>
+                                                    <MudChip T="string" Size="Size.Small" Style="margin:2px 0"
+                                                             Color="@(captured.PipelineType == PipelineType.Release ? Color.Warning : Color.Info)">
+                                                        @captured.PipelineType
+                                                    </MudChip>
+                                                </td>
+                                                <td style="white-space:nowrap">@captured.PipelineName</td>
+                                                <td style="white-space:nowrap">@captured.OrganizationName</td>
+                                                <td style="white-space:nowrap">@captured.Project</td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+                        </MudPaper>
+                    }
+                </div>
+
+                @if (_pipelineToAdd != null)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-2" Spacing="1">
+                        <MudChip T="string" Size="Size.Small" Style="margin:0"
+                                 Color="@(_pipelineToAdd.PipelineType == PipelineType.Release ? Color.Warning : Color.Info)">
+                            @_pipelineToAdd.PipelineType
+                        </MudChip>
+                        <MudText Typo="Typo.body2"><b>@_pipelineToAdd.PipelineName</b></MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">@_pipelineToAdd.OrganizationName / @_pipelineToAdd.Project</MudText>
+                        <MudIconButton Size="Size.Small" Icon="@Icons.Material.Filled.Close"
+                                       OnClick="() => _pipelineToAdd = null" />
+                    </MudStack>
+                }
+            </MudCardContent>
+            <MudCardActions>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           OnClick="AddPipelineAsync"
+                           Disabled="@(_pipelineToAdd == null)"
+                           Class="qa-compare-add-btn">Add</MudButton>
+            </MudCardActions>
+        </MudCard>
+    </MudStack>
+
+    <MudDivider Class="my-2" />
+
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Class="mt-2">
+        <MudSwitch @bind-Value="_showOnlyDifferences" Color="Color.Warning"
+                   Label="Show only differences" Class="qa-compare-diff-switch" />
+        <MudSpacer />
+        <MudButton Class="qa-compare-export-all-excel-btn" Variant="Variant.Filled" Color="Color.Success"
+                   OnClick="ExportAllExcelAsync" Disabled="@(_result.Sections.Count == 0)">
+            Export all to Excel
+        </MudButton>
+        <MudButton Class="qa-compare-export-pdf-btn" Variant="Variant.Filled" Color="Color.Info"
+                   OnClick="ExportPdfAsync" Disabled="@(_result.Sections.Count == 0)">
+            Export to PDF
+        </MudButton>
+    </MudStack>
+</MudPaper>
+
+@if (_selectedPipelines.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">Select pipelines on the Pipelines page first, or add them using the panel above.</MudAlert>
+}
+else if (_selectedPipelines.Count < 2)
+{
+    <MudAlert Severity="Severity.Info">Add at least one more pipeline to start comparing.</MudAlert>
+}
+else
+{
+    @foreach (var section in _result.Sections)
+    {
+        <CompareSection Section="section"
+                        Pipelines="_selectedPipelines"
+                        ShowOnlyDifferences="_showOnlyDifferences"
+                        OnRemovePipeline="RemovePipelineAsync"
+                        OnCopyCsv="CopySectionCsvAsync"
+                        OnExportExcel="ExportSectionExcelAsync" />
+    }
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "ids")]
+    public string? Ids { get; set; }
+
+    private bool _isLoading;
+    private bool _showOnlyDifferences;
+    private PipelineCacheRecord? _pipelineToAdd;
+    private string _addSearchText = string.Empty;
+    private bool _lookupOpen;
+    private List<PipelineCacheRecord> _allPipelines = new();
+    private List<PipelineCacheRecord> _selectedPipelines = new();
+    private List<PipelineDefinitionRecord> _definitions = new();
+    private CompareResult _result = new();
+
+    private IEnumerable<PipelineCacheRecord> AvailablePipelines
+    {
+        get
+        {
+            if (_selectedPipelines.Count == 0)
+            {
+                return _allPipelines.Where(x => !_selectedPipelines.Any(s => s.Id == x.Id));
+            }
+
+            var selectedType = _selectedPipelines[0].PipelineType;
+            return _allPipelines
+                .Where(x => !_selectedPipelines.Any(s => s.Id == x.Id))
+                .Where(x => x.PipelineType == selectedType)
+                .OrderBy(x => x.OrganizationName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Project, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.PipelineName, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            _allPipelines = await AdoService.GetCachedPipelinesAsync();
+            var selectedIds = ParseIds(Ids);
+            _selectedPipelines = _allPipelines
+                .Where(x => selectedIds.Contains(x.Id))
+                .ToList();
+
+            await RebuildCompareAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load comparison: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task AddPipelineAsync()
+    {
+        var candidate = _pipelineToAdd;
+        if (candidate is null)
+        {
+            return;
+        }
+
+        if (_selectedPipelines.Count > 0 && candidate.PipelineType != _selectedPipelines[0].PipelineType)
+        {
+            Snackbar.Add("Only pipelines of the same type can be compared in one set.", Severity.Warning);
+            return;
+        }
+
+        if (_selectedPipelines.Any(x => x.Id == candidate.Id))
+        {
+            return;
+        }
+
+        _selectedPipelines.Add(candidate);
+        _pipelineToAdd = null;
+        _addSearchText = string.Empty;
+        UpdateQueryString();
+        await RebuildCompareAsync();
+    }
+
+    private async Task RemovePipelineAsync(int cacheId)
+    {
+        _selectedPipelines.RemoveAll(x => x.Id == cacheId);
+        UpdateQueryString();
+        await RebuildCompareAsync();
+    }
+
+    private List<PipelineCacheRecord> LookupResults
+    {
+        get
+        {
+            var available = AvailablePipelines;
+            if (string.IsNullOrWhiteSpace(_addSearchText))
+            {
+                return available.ToList();
+            }
+
+            return available.Where(p =>
+                ContainsIgnoreCase(p.PipelineName, _addSearchText) ||
+                ContainsIgnoreCase(p.OrganizationName, _addSearchText) ||
+                ContainsIgnoreCase(p.Project, _addSearchText) ||
+                ContainsIgnoreCase(p.PipelineType.ToString(), _addSearchText))
+                .ToList();
+        }
+    }
+
+    private void OnAddSearchChanged(string value)
+    {
+        _addSearchText = value;
+        _lookupOpen = true;
+    }
+
+    private void OpenLookup() => _lookupOpen = true;
+    private void CloseLookup() => _lookupOpen = false;
+
+    private void SelectFromLookup(PipelineCacheRecord p)
+    {
+        _pipelineToAdd = p;
+        _addSearchText = string.Empty;
+        _lookupOpen = false;
+    }
+
+    private static bool ContainsIgnoreCase(string? value, string pattern) =>
+        !string.IsNullOrWhiteSpace(value) && value.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+
+    private async Task RebuildCompareAsync()
+    {
+        if (_selectedPipelines.Count < 2)
+        {
+            _definitions = new();
+            _result = new CompareResult();
+            return;
+        }
+
+        try
+        {
+            _definitions = await AdoService.GetPipelineDefinitionsAsync(_selectedPipelines);
+            _result = CompareService.Compare(_definitions);
+
+            var errorCount = _definitions.Sum(x => x.Errors.Count);
+            if (errorCount > 0)
+            {
+                Snackbar.Add($"Loaded with {errorCount} definition fetch/parsing issues. See Errors section.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Comparison build failed: {ex.Message}", Severity.Error);
+            _result = new CompareResult();
+        }
+    }
+
+    private async Task ExportAllExcelAsync()
+    {
+        if (_result.Sections.Count == 0)
+        {
+            return;
+        }
+
+        var bytes = CompareExportService.ExportExcel(_result, _selectedPipelines);
+        await DownloadFileAsync($"compare-{DateTime.UtcNow:yyyyMMdd-HHmmss}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+    }
+
+    private async Task ExportPdfAsync()
+    {
+        if (_result.Sections.Count == 0)
+        {
+            return;
+        }
+
+        var bytes = CompareExportService.ExportPdf(_result, _selectedPipelines);
+        await DownloadFileAsync($"compare-{DateTime.UtcNow:yyyyMMdd-HHmmss}.pdf", "application/pdf", bytes);
+    }
+
+    private async Task ExportSectionExcelAsync(CompareSectionResult section)
+    {
+        var bytes = CompareExportService.ExportExcel(_result, _selectedPipelines, section.Title);
+        await DownloadFileAsync($"compare-{SanitizeFilePart(section.Title)}-{DateTime.UtcNow:yyyyMMdd-HHmmss}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+    }
+
+    private async Task CopySectionCsvAsync(CompareSectionResult section)
+    {
+        var csv = CompareExportService.ExportSectionCsv(section, _selectedPipelines);
+        await JSRuntime.InvokeVoidAsync("appClipboard.copyText", csv);
+        Snackbar.Add($"Section '{section.Title}' copied as CSV.", Severity.Success);
+    }
+
+    private async Task DownloadFileAsync(string fileName, string contentType, byte[] bytes)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        await JSRuntime.InvokeVoidAsync("appFiles.downloadFromBase64", fileName, contentType, base64);
+    }
+
+    private void UpdateQueryString()
+    {
+        var ids = string.Join(',', _selectedPipelines.Select(x => x.Id));
+        NavigationManager.NavigateTo($"/compare?ids={ids}", replace: true);
+    }
+
+    private static HashSet<int> ParseIds(string? ids)
+    {
+        var result = new HashSet<int>();
+        if (string.IsNullOrWhiteSpace(ids))
+        {
+            return result;
+        }
+
+        foreach (var token in ids.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (int.TryParse(token, out var value))
+            {
+                result.Add(value);
+            }
+        }
+
+        return result;
+    }
+
+    private static string SanitizeFilePart(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var safe = new string(value.Where(ch => !invalid.Contains(ch)).ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "section" : safe.Replace(' ', '-');
+    }
+}

@@ -1,0 +1,273 @@
+@page "/organizations"
+@inject IOrganizationService OrganizationService
+@inject IAdoService AdoService
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Organizations</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Organizations</MudText>
+
+<MudPaper Class="pa-4 mb-4 qa-org-form-card">
+    <MudText Typo="Typo.h6">@(_editingId.HasValue ? "Edit Organization" : "Add Organization")</MudText>
+
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
+        Fill Name, Organization URL and PAT. URL must start with https://.
+    </MudAlert>
+
+    <MudForm @ref="_form" Class="mt-3">
+        <MudGrid>
+            <MudItem xs="12" md="3">
+                <MudTextField T="string"
+                              @bind-Value="_model.Name"
+                              Class="qa-org-name-input"
+                              Label="Name"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Required="true"
+                              RequiredError="Name is required." />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string"
+                              @bind-Value="_model.OrganizationUrl"
+                              Class="qa-org-url-input"
+                              Label="Organization URL"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              Placeholder="https://dev.azure.com/your-org"
+                              Required="true"
+                              RequiredError="Organization URL is required." />
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudTextField T="string"
+                              @bind-Value="_model.Pat"
+                              Class="qa-org-pat-input"
+                              Label="PAT"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              Immediate="true"
+                              InputType="@(_showPat ? InputType.Text : InputType.Password)"
+                              Adornment="Adornment.End"
+                              AdornmentIcon="@(_showPat ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                              OnAdornmentClick="TogglePatVisibility"
+                              Required="@(!_editingId.HasValue)"
+                              RequiredError="PAT is required when creating an organization."
+                              HelperText="@(_editingId.HasValue ? "Leave empty to keep current PAT." : "Required for create.")" />
+            </MudItem>
+            <MudItem xs="12" md="2" Class="d-flex align-center">
+                <MudSwitch @bind-Value="_model.IsActive" Color="Color.Primary" Label="Active" />
+            </MudItem>
+        </MudGrid>
+    </MudForm>
+
+    <MudStack Row="true" Class="mt-3" Spacing="2">
+        <MudButton Variant="Variant.Filled"
+                   Class="qa-org-save-btn"
+                   Color="Color.Primary"
+                   Disabled="_isSaving"
+                   OnClick="SaveAsync">@(_editingId.HasValue ? "Save" : "Add")</MudButton>
+        @if (_editingId.HasValue)
+        {
+            <MudButton Class="qa-org-cancel-btn" Variant="Variant.Outlined" Disabled="_isSaving" OnClick="CancelEdit">Cancel</MudButton>
+        }
+    </MudStack>
+</MudPaper>
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-2" />
+}
+
+<MudTable T="OrganizationViewModel" Items="_organizations" Dense="true" Hover="true" Elevation="0" Class="qa-orgs-table">
+    <HeaderContent>
+        <MudTh>Name</MudTh>
+        <MudTh>Organization URL</MudTh>
+        <MudTh>PAT</MudTh>
+        <MudTh>Active</MudTh>
+        <MudTh>Created (UTC)</MudTh>
+        <MudTh>Updated (UTC)</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Name">@context.Name</MudTd>
+        <MudTd DataLabel="Organization URL">@context.OrganizationUrl</MudTd>
+        <MudTd DataLabel="PAT">@context.PatMasked</MudTd>
+        <MudTd DataLabel="Active">
+            <MudChip T="string" Size="Size.Small" Color="@(context.IsActive ? Color.Success : Color.Default)">
+                @(context.IsActive ? "Active" : "Inactive")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Created (UTC)">@context.CreatedAtUtc.ToString("u")</MudTd>
+        <MudTd DataLabel="Updated (UTC)">@context.UpdatedAtUtc.ToString("u")</MudTd>
+        <MudTd DataLabel="Actions">
+            <MudStack Row="true" Spacing="1">
+                <MudButton Class="@($"qa-org-edit-btn qa-org-edit-btn-{context.Id}")" Variant="Variant.Text" Color="Color.Primary" Size="Size.Small" OnClick="() => StartEdit(context)">Edit</MudButton>
+                <MudButton Class="@($"qa-org-delete-btn qa-org-delete-btn-{context.Id}")" Variant="Variant.Text" Color="Color.Error" Size="Size.Small" OnClick="() => DeleteAsync(context)">Delete</MudButton>
+                <MudButton Class="@($"qa-org-test-btn qa-org-test-btn-{context.Id}")" Variant="Variant.Text" Color="Color.Info" Size="Size.Small" OnClick="() => TestConnectionAsync(context.Id)">Test connection</MudButton>
+            </MudStack>
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText>No organizations configured yet.</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+@code {
+    private readonly OrganizationUpsertModel _model = new();
+    private MudForm? _form;
+    private bool _isLoading;
+    private bool _isSaving;
+    private bool _showPat;
+    private int? _editingId;
+    private List<OrganizationViewModel> _organizations = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            _organizations = await OrganizationService.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load organizations: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_isSaving)
+        {
+            return;
+        }
+
+        if (_form is null)
+        {
+            return;
+        }
+
+        await _form.Validate();
+        if (!_form.IsValid)
+        {
+            return;
+        }
+
+        if (!_editingId.HasValue && string.IsNullOrWhiteSpace(_model.Pat))
+        {
+            Snackbar.Add("PAT is required when creating an organization.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            _isSaving = true;
+
+            if (_editingId.HasValue)
+            {
+                _model.Id = _editingId;
+                await OrganizationService.UpdateAsync(_model);
+                Snackbar.Add("Organization updated.", Severity.Success);
+            }
+            else
+            {
+                await OrganizationService.CreateAsync(_model);
+                Snackbar.Add("Organization created.", Severity.Success);
+            }
+
+            CancelEdit();
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void StartEdit(OrganizationViewModel org)
+    {
+        _editingId = org.Id;
+        _model.Id = org.Id;
+        _model.Name = org.Name;
+        _model.OrganizationUrl = org.OrganizationUrl;
+        _model.IsActive = org.IsActive;
+        _model.Pat = string.Empty;
+    }
+
+    private void CancelEdit()
+    {
+        _editingId = null;
+        _model.Id = null;
+        _model.Name = string.Empty;
+        _model.OrganizationUrl = string.Empty;
+        _model.Pat = string.Empty;
+        _model.IsActive = true;
+        _showPat = false;
+    }
+
+    private void TogglePatVisibility()
+    {
+        _showPat = !_showPat;
+    }
+
+    private async Task DeleteAsync(OrganizationViewModel org)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "Delete organization",
+            $"Delete '{org.Name}'? This will also remove all its synced sites and cached pipelines.",
+            yesText: "Delete",
+            noText: "Cancel");
+
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await OrganizationService.DeleteAsync(org.Id);
+            Snackbar.Add("Organization deleted.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task TestConnectionAsync(int orgId)
+    {
+        try
+        {
+            var record = await OrganizationService.GetRecordAsync(orgId);
+            if (record is null)
+            {
+                Snackbar.Add("Organization not found.", Severity.Error);
+                return;
+            }
+
+            var result = await AdoService.TestConnectionAsync(record);
+            var severity = result.IsSuccess ? Severity.Success : Severity.Error;
+            Snackbar.Add($"{result.Message} ({result.Duration.TotalMilliseconds:0} ms)", severity);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Connection test failed: {ex.Message}", Severity.Error);
+        }
+    }
+}

@@ -1,0 +1,129 @@
+<MudExpansionPanels MultiExpansion="true" Class="mb-3">
+    <MudExpansionPanel Text="@Section.Title" Expanded="true">
+        <MudStack Row="true" Spacing="1" Class="mb-2">
+            <MudButton Class="qa-compare-copy-csv-btn" Variant="Variant.Outlined" Size="Size.Small" OnClick="CopyAsCsvAsync" Disabled="@(!OnCopyCsv.HasDelegate)">
+                Copy as CSV
+            </MudButton>
+            <MudButton Class="qa-compare-export-section-excel-btn" Variant="Variant.Outlined" Size="Size.Small" OnClick="ExportSectionExcelAsync" Disabled="@(!OnExportExcel.HasDelegate)">
+                Export to Excel
+            </MudButton>
+        </MudStack>
+
+        @if (Section.Rows.Count == 0)
+        {
+            <MudText>No rows in this section.</MudText>
+        }
+        else
+        {
+            <MudTable T="CompareSectionRow" Items="FilteredRows" Dense="true" Hover="true" Elevation="0">
+                <HeaderContent>
+                    <MudTh>Key</MudTh>
+                    @foreach (var pipeline in Pipelines)
+                    {
+                        <MudTh>
+                            <MudStack Spacing="0" AlignItems="AlignItems.Start">
+                                <MudStack Row="true" Spacing="0" AlignItems="AlignItems.Center">
+                                    <MudText Typo="Typo.subtitle2">@pipeline.PipelineName</MudText>
+                                    @if (OnRemovePipeline.HasDelegate)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                       Size="Size.Small"
+                                                       Color="Color.Error"
+                                                       aria-label="Remove from comparison"
+                                                       OnClick="() => HandleRemovePipeline(pipeline.Id)" />
+                                    }
+                                </MudStack>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary"
+                                         Style="white-space:nowrap;">@pipeline.OrganizationName / @pipeline.Project</MudText>
+                            </MudStack>
+                        </MudTh>
+                    }
+                    <MudTh>Status</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Key" Style="@GetCellStyle(context.Status)">@context.Key</MudTd>
+                    @foreach (var pipeline in Pipelines)
+                    {
+                        <MudTd DataLabel="@pipeline.PipelineName" Style="@GetCellStyle(context.Status)">
+                            <div style="white-space: pre-wrap;">@NormalizeMultiline(GetValue(context, pipeline.Id))</div>
+                        </MudTd>
+                    }
+                    <MudTd DataLabel="Status" Style="@GetCellStyle(context.Status)">@context.Status</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Color="Color.Success">All rows match — nothing differs.</MudText>
+                </NoRecordsContent>
+            </MudTable>
+        }
+    </MudExpansionPanel>
+</MudExpansionPanels>
+
+@code {
+    [Parameter, EditorRequired]
+    public CompareSectionResult Section { get; set; } = new();
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PipelineCacheRecord> Pipelines { get; set; } = Array.Empty<PipelineCacheRecord>();
+
+    [Parameter]
+    public bool ShowOnlyDifferences { get; set; }
+
+    [Parameter]
+    public EventCallback<int> OnRemovePipeline { get; set; }
+
+    [Parameter]
+    public EventCallback<CompareSectionResult> OnCopyCsv { get; set; }
+
+    [Parameter]
+    public EventCallback<CompareSectionResult> OnExportExcel { get; set; }
+
+    private IEnumerable<CompareSectionRow> FilteredRows =>
+        ShowOnlyDifferences
+            ? Section.Rows.Where(r => r.Status != CompareRowStatus.Match)
+            : Section.Rows;
+
+    private Task HandleRemovePipeline(int pipelineId) => OnRemovePipeline.InvokeAsync(pipelineId);
+
+    private static string? GetValue(CompareSectionRow row, int pipelineId)
+    {
+        if (row.ValuesByPipelineId.TryGetValue(pipelineId, out var value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static string NormalizeMultiline(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "-";
+        }
+
+        return value
+            .Replace("\\\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\n", "\n", StringComparison.Ordinal);
+    }
+
+    private static string GetCellStyle(CompareRowStatus status)
+    {
+        return status switch
+        {
+            CompareRowStatus.Match => "background:#e8f5e9;",
+            CompareRowStatus.Different => "background:#fff9c4;",
+            CompareRowStatus.Missing => "background:#ffebee;",
+            _ => string.Empty,
+        };
+    }
+
+    private Task CopyAsCsvAsync()
+    {
+        return OnCopyCsv.InvokeAsync(Section);
+    }
+
+    private Task ExportSectionExcelAsync()
+    {
+        return OnExportExcel.InvokeAsync(Section);
+    }
+}

@@ -1,0 +1,75 @@
+﻿@page "/"
+
+<PageTitle>ADO Pipeline Comparator</PageTitle>
+
+<MudText Typo="Typo.h4" Align="Align.Center" Class="mt-6 mb-1">Welcome to ADO Pipeline Comparator</MudText>
+<MudText Typo="Typo.subtitle1" Align="Align.Center" Color="Color.Secondary" Class="mb-1">ADO Pipeline Comparator v@_appVersion</MudText>
+<MudText Typo="Typo.body2" Align="Align.Center" Color="Color.Secondary" Class="mb-8">
+    Compare Build and Release pipeline definitions across multiple Azure DevOps organizations.
+</MudText>
+
+<MudGrid Spacing="3" Class="mb-8" Justify="Justify.Center">
+    <MudItem xs="12" sm="6" md="6">
+        <MudPaper Class="pa-6" Elevation="1" Style="height:100%">
+            <MudIcon Icon="@Icons.Material.Filled.CompareArrows" Color="Color.Primary" Size="Size.Large" Class="mb-3" />
+            <MudText Typo="Typo.h6" Class="mb-2">Cross-Organization Comparison</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Side-by-side comparison of Build and Release pipeline definitions across multiple ADO organizations and projects.
+            </MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="6">
+        <MudPaper Class="pa-6" Elevation="1" Style="height:100%">
+            <MudIcon Icon="@Icons.Material.Filled.FilterList" Color="Color.Success" Size="Size.Large" Class="mb-3" />
+            <MudText Typo="Typo.h6" Class="mb-2">Advanced Filtering &amp; Grouping</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Filter, sort, and group pipelines by organization, project, type and more. Column-level filters make finding pipelines instant.
+            </MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="6">
+        <MudPaper Class="pa-6" Elevation="1" Style="height:100%">
+            <MudIcon Icon="@Icons.Material.Filled.Lock" Color="Color.Warning" Size="Size.Large" Class="mb-3" />
+            <MudText Typo="Typo.h6" Class="mb-2">Secure PAT Storage</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Personal Access Tokens are stored encrypted using AES-256. Tokens are never written to disk or logs in plain text.
+            </MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="6">
+        <MudPaper Class="pa-6" Elevation="1" Style="height:100%">
+            <MudIcon Icon="@Icons.Material.Filled.Sync" Color="Color.Info" Size="Size.Large" Class="mb-3" />
+            <MudText Typo="Typo.h6" Class="mb-2">Live Sync from ADO</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                Sync pipeline definitions directly from Azure DevOps on demand. Local SQLite cache keeps the UI fast between syncs.
+            </MudText>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+<MudDivider Class="mb-4" />
+
+<div class="d-flex flex-column align-center mb-3">
+    <MudText Typo="Typo.caption" Color="Color.Secondary">Software Owner</MudText>
+    <MudText Typo="Typo.subtitle2" Class="mt-1">SIMS tech</MudText>
+    <MudLink Href="mailto:vhlu@sims-service.com" Typo="Typo.body2" Class="mt-1">vhlu@sims-service.com</MudLink>
+</div>
+
+<MudDivider Class="mb-3" />
+
+<MudText Typo="Typo.caption" Align="Align.Center" Color="Color.Secondary" Class="d-block mb-1">
+    &copy; 2026 SIMS tech &mdash; All rights reserved.
+</MudText>
+<MudText Typo="Typo.caption" Align="Align.Center" Color="Color.Secondary" Class="d-block mb-6">
+    This software is proprietary and owned by SIMS tech. Unauthorized copying, distribution, or modification is strictly prohibited.
+</MudText>
+
+@code {
+    private string _appVersion = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        var ver = GetType().Assembly.GetName().Version;
+        _appVersion = ver is null ? "?" : $"v{ver.Major}.{ver.Minor}.{ver.Build}";
+    }
+}

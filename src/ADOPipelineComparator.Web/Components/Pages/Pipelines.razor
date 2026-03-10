@@ -1,0 +1,334 @@
+@page "/pipelines"
+@inject IAdoService AdoService
+@inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
+
+<PageTitle>Pipelines</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-3">Pipelines</MudText>
+
+<MudPaper Class="pa-3 mb-3">
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+        <MudButton Class="qa-pipelines-refresh-all-btn" Variant="Variant.Filled" Color="Color.Primary" OnClick="RefreshAllAsync">Refresh all</MudButton>
+        <MudButton Class="qa-pipelines-reload-cache-btn" Variant="Variant.Filled" Color="Color.Secondary" OnClick="LoadCachedAsync">Reload cache</MudButton>
+        <MudButton Class="qa-pipelines-refresh-selected-btn" Variant="Variant.Filled" Color="Color.Warning"
+                   Disabled="@(_selectedItems.Count == 0)"
+                   OnClick="RefreshSelectedAsync">Refresh selected (@_selectedItems.Count)</MudButton>
+        <MudButton Class="qa-pipelines-compare-selected-btn" Variant="Variant.Filled" Color="Color.Info" Disabled="@(!CanCompare)" OnClick="NavigateToCompare">Compare selected</MudButton>
+
+        <MudTextField T="string"
+                      Class="qa-pipelines-search-input"
+                      Value="_searchText"
+                      ValueChanged="OnSearchChanged"
+                      Placeholder="Filter by org, project, pipeline..."
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Style="min-width:300px" />
+    </MudStack>
+
+    @if (_organizationButtons.Count > 0)
+    {
+        <MudDivider Class="my-3" />
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Refresh by project</MudText>
+        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="1">
+            @foreach (var org in _organizationButtons)
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => RefreshSiteAsync(org.SiteId)">
+                    @org.SiteName / @org.ProjectName
+                </MudButton>
+            }
+        </MudStack>
+    }
+
+    <MudDivider Class="my-3" />
+    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+        <MudCheckBox T="bool" @bind-Value="_showTaskName" Label="Task Name" />
+        <MudCheckBox T="bool" @bind-Value="_showSubtype" Label="Definition Type" />
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-3">
+            Click <b>&#8942;</b> on any column header to sort, group or hide.
+        </MudText>
+    </MudStack>
+</MudPaper>
+
+@if (_isLoading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-2" />
+}
+
+<MudDataGrid T="PipelineCacheRecord"
+             Items="FilteredPipelines"
+             MultiSelection="true"
+             @bind-SelectedItems="_selectedItems"
+             Dense="true"
+             Hover="true"
+             Elevation="0"
+             Filterable="true"
+             FilterMode="DataGridFilterMode.ColumnFilterRow"
+             SortMode="SortMode.Multiple"
+             Groupable="true"
+             ShowColumnOptions="true"
+             ColumnResizeMode="ResizeMode.Column"
+             FixedHeader="true"
+             Height="calc(100vh - 360px)"
+             Style="width:100%"
+             Class="qa-pipelines-table">
+    <Columns>
+        <SelectColumn T="PipelineCacheRecord" ShowInFooter="false" />
+        <PropertyColumn Property="x => x.OrganizationName" Title="Organization" Groupable="true" HeaderStyle="min-width:120px;width:120px" />
+        <PropertyColumn Property="x => x.Project"          Title="Project"       Groupable="true" HeaderStyle="min-width:140px;width:140px" />
+        <PropertyColumn Property="x => x.PipelineId"       Title="ID"            HeaderStyle="min-width:55px;width:55px" />
+        <PropertyColumn Property="x => x.PipelineName"     Title="Pipeline Name" HeaderStyle="min-width:200px" />
+        <PropertyColumn Property="x => x.PipelineType"     Title="Type"          Groupable="true" HeaderStyle="min-width:80px;width:80px" />
+        @if (_showSubtype)
+        {
+            <PropertyColumn Property="x => x.PipelineSubtype" Title="Definition Type" Groupable="true" HeaderStyle="min-width:130px;width:130px" />
+        }
+        <PropertyColumn Property="x => x.LastRunDateUtc" Title="Last Run (UTC)" HeaderStyle="min-width:165px;width:165px">
+            <CellTemplate>
+                @FormatUtc(context.Item.LastRunDateUtc)
+            </CellTemplate>
+        </PropertyColumn>
+        <PropertyColumn Property="x => x.LastRunBy" Title="Last Run By" Groupable="true" HeaderStyle="min-width:160px;width:160px" />
+        @if (_showTaskName)
+        {
+            <PropertyColumn Property="x => x.TaskName" Title="Task Name" Groupable="true" HeaderStyle="min-width:150px;width:150px" />
+        }
+        <PropertyColumn Property="x => x.CachedAtUtc" Title="Updated (UTC)" HeaderStyle="min-width:165px;width:165px">
+            <CellTemplate>
+                @FormatUtc(context.Item.CachedAtUtc)
+            </CellTemplate>
+        </PropertyColumn>
+        <TemplateColumn Title="Actions" Filterable="false" Sortable="false" Groupable="false" HeaderStyle="min-width:120px;width:120px">
+            <CellTemplate>
+                <MudStack Row="true" Spacing="1">
+                    <MudButton Class="@($"qa-pipeline-refresh-btn qa-pipeline-refresh-btn-{context.Item.Id}")"
+                               Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                               OnClick="() => RefreshOneAsync(context.Item.Id)">Refresh</MudButton>
+                    <MudButton Class="@($"qa-pipeline-open-btn qa-pipeline-open-btn-{context.Item.Id}")"
+                               Variant="Variant.Text" Color="Color.Info" Size="Size.Small"
+                               Href="@context.Item.PipelineUrl" Target="_blank">Open</MudButton>
+                </MudStack>
+            </CellTemplate>
+        </TemplateColumn>
+    </Columns>
+    <NoRecordsContent>
+        <MudText>No pipeline data found. Click "Refresh all" to load from ADO.</MudText>
+    </NoRecordsContent>
+</MudDataGrid>
+
+@code {
+    private bool _isLoading;
+    private bool _showTaskName = true;
+    private bool _showSubtype = true;
+    private string _searchText = string.Empty;
+
+    private List<PipelineCacheRecord> _pipelines = new();
+    private List<OrganizationButtonModel> _organizationButtons = new();
+    private HashSet<PipelineCacheRecord> _selectedItems = new();
+
+    private IEnumerable<PipelineCacheRecord> FilteredPipelines => _pipelines.Where(FilterBySearch);
+
+    private bool CanCompare =>
+        _selectedItems.Count >= 2 &&
+        _selectedItems.Select(x => x.PipelineType).Distinct().Count() == 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadCachedAsync();
+    }
+
+    private async Task LoadCachedAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            _pipelines = await AdoService.GetCachedPipelinesAsync();
+            _organizationButtons = _pipelines
+                .GroupBy(x => new { x.AdoSiteId, x.OrganizationName, x.Project })
+                .Select(g => new OrganizationButtonModel(g.Key.AdoSiteId, g.Key.OrganizationName, g.Key.Project))
+                .OrderBy(x => x.SiteName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.ProjectName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            _selectedItems.Clear();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load pipelines: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task RefreshAllAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            var summary = await AdoService.RefreshAllPipelinesAsync();
+            DisplayRefreshSummary(summary, "All organizations refreshed.");
+            await LoadCachedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task RefreshSiteAsync(int siteId)
+    {
+        _isLoading = true;
+
+        try
+        {
+            var summary = await AdoService.RefreshPipelinesForSiteAsync(siteId);
+            DisplayRefreshSummary(summary, "Organization refreshed.");
+            await LoadCachedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Organization refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task RefreshSelectedAsync()
+    {
+        if (_selectedItems.Count == 0) return;
+
+        _isLoading = true;
+        var ids = _selectedItems.Select(x => x.Id).ToList();
+        var totalErrors = new List<string>();
+        var totalRefreshed = 0;
+
+        try
+        {
+            foreach (var id in ids)
+            {
+                var summary = await AdoService.RefreshSinglePipelineAsync(id);
+                totalRefreshed += summary.Pipelines.Count;
+                totalErrors.AddRange(summary.Errors);
+            }
+
+            await LoadCachedAsync();
+
+            if (totalErrors.Count > 0)
+                Snackbar.Add($"Refreshed {totalRefreshed} pipeline(s) with {totalErrors.Count} error(s).", Severity.Warning);
+            else
+                Snackbar.Add($"Refreshed {totalRefreshed} pipeline(s) successfully.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task RefreshOneAsync(int cacheId)
+    {
+        _isLoading = true;
+
+        try
+        {
+            var summary = await AdoService.RefreshSinglePipelineAsync(cacheId);
+            DisplayRefreshSummary(summary, "Pipeline refreshed.");
+            await LoadCachedAsync();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Pipeline refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void NavigateToCompare()
+    {
+        if (_selectedItems.Count < 2)
+        {
+            Snackbar.Add("Select at least two pipelines.", Severity.Warning);
+            return;
+        }
+
+        if (_selectedItems.Select(x => x.PipelineType).Distinct().Count() > 1)
+        {
+            Snackbar.Add("Select pipelines of the same type (Build or Release).", Severity.Warning);
+            return;
+        }
+
+        var ids = string.Join(',', _selectedItems.Select(x => x.Id));
+        NavigationManager.NavigateTo($"/compare?ids={ids}");
+    }
+
+    private void OnSearchChanged(string value)
+    {
+        _searchText = value;
+    }
+
+    private bool FilterBySearch(PipelineCacheRecord pipeline)
+    {
+        if (string.IsNullOrWhiteSpace(_searchText))
+        {
+            return true;
+        }
+
+        return ContainsIgnoreCase(pipeline.OrganizationName, _searchText)
+            || ContainsIgnoreCase(pipeline.Project, _searchText)
+            || ContainsIgnoreCase(pipeline.PipelineName, _searchText)
+            || ContainsIgnoreCase(pipeline.PipelineSubtype, _searchText)
+            || pipeline.PipelineId.ToString().Contains(_searchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsIgnoreCase(string? value, string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void DisplayRefreshSummary(RefreshSummary summary, string successMessage)
+    {
+        if (summary.Errors.Count == 0)
+        {
+            Snackbar.Add(successMessage, Severity.Success);
+            return;
+        }
+
+        Snackbar.Add(successMessage, Severity.Warning);
+        foreach (var error in summary.Errors.Take(5))
+        {
+            Snackbar.Add(error, Severity.Error);
+        }
+
+        if (summary.Errors.Count > 5)
+        {
+            Snackbar.Add($"...and {summary.Errors.Count - 5} more errors.", Severity.Error);
+        }
+    }
+
+    private static string FormatUtc(DateTime? value)
+    {
+        return value?.ToString("u") ?? "-";
+    }
+
+    private sealed record OrganizationButtonModel(int SiteId, string SiteName, string ProjectName);
+}
