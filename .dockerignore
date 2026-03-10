@@ -1,0 +1,13 @@
+obj/
+bin/
+.git/
+.github/
+.vscode/
+.cursor/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/data/
+**/*.log
+docs/testing/screenshots/
+TestResults/

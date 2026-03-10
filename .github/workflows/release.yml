@@ -1,0 +1,187 @@
+# ============================================================
+# Release & Package workflow
+# ============================================================
+# Trigger: push tag v* (e.g. v1.0.0.1)
+# - Builds Windows self-contained zip and publishes to GitHub Release
+# - Builds Docker image: pushes to GHCR (ghcr.io) and Docker Hub (if secrets set)
+# - Docker Hub push: set repo secrets DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#   (job runs always; if secrets missing, step fails but workflow continues)
+# ============================================================
+
+name: Release and Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---- Windows self-contained build → Release artifact ----
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Set version from tag
+        run: |
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          echo "VERSION=$ver" >> $env:GITHUB_ENV
+
+      - name: Publish (Windows self-contained)
+        run: |
+          $outDir = "$env:RUNNER_TEMP\publish"
+          dotnet publish src/ADOPipelineComparator.Web/ADOPipelineComparator.Web.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            --output $outDir `
+            /p:Version=$env:VERSION
+          Set-Content -Path (Join-Path $outDir "start.cmd") `
+            -Value "@echo off","echo Starting ADO Pipeline Comparator...","start http://localhost:5000","ADOPipelineComparator.Web.exe --urls `"http://localhost:5000`"" `
+            -Encoding ASCII
+          echo "OUT_DIR=$outDir" >> $env:GITHUB_ENV
+
+      - name: Create zip artifact
+        run: |
+          $zipName = "ADOPipelineComparator-$env:VERSION-win-x64.zip"
+          Compress-Archive -Path "$env:OUT_DIR\*" -DestinationPath $zipName
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+          Move-Item $zipName $env:GITHUB_WORKSPACE
+
+      - name: Upload zip for release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ado-pipeline-comparator-windows
+          path: ADOPipelineComparator-${{ env.VERSION }}-win-x64.zip
+
+  # ---- Docker build → GitHub Container Registry ----
+  build-docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/ado-pipeline-comparator
+          tags: |
+            type=ref,event=tag,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image (GHCR)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # ---- Push same image to Docker Hub ----
+  # Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN in repo secrets.
+  # If not set, job fails but workflow continues (continue-on-error: true).
+  push-dockerhub:
+    needs: [build-docker]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout (for Docker Hub overview)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull from GHCR and push to Docker Hub
+        env:
+          GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/ado-pipeline-comparator
+          TAG: ${{ github.ref_name }}
+        run: |
+          docker pull "${GHCR_IMAGE}:${TAG}"
+          docker tag "${GHCR_IMAGE}:${TAG}" vglu/ado-pipeline-comparator:${TAG}
+          docker tag "${GHCR_IMAGE}:${TAG}" vglu/ado-pipeline-comparator:latest
+          docker push vglu/ado-pipeline-comparator:${TAG}
+          docker push vglu/ado-pipeline-comparator:latest
+
+      - name: Update Docker Hub repository overview
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          RESP=$(curl -s -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}")
+          TOKEN=$(echo "$RESP" | jq -r .token)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then echo "Failed to get Docker Hub JWT"; exit 1; fi
+          BODY=$(jq -n --rawfile f .github/docker-hub-overview.md '{full_description: $f}')
+          curl -s -X PATCH "https://hub.docker.com/v2/repositories/vglu/ado-pipeline-comparator/" \
+            -H "Authorization: JWT ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY"
+
+  # ---- Create GitHub Release with artifact ----
+  release:
+    needs: [build-windows, build-docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version
+        id: ver
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ado-pipeline-comparator-windows
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "v${{ steps.ver.outputs.VERSION }}"
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: ADOPipelineComparator-${{ steps.ver.outputs.VERSION }}-win-x64.zip
