@@ -70,7 +70,14 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// Only redirect to HTTPS when an HTTPS endpoint is actually configured.
+// In Docker containers, TLS is typically terminated at the reverse-proxy/load-balancer level.
+var httpsPort = Environment.GetEnvironmentVariable("ASPNETCORE_HTTPS_PORT")
+    ?? builder.Configuration["Https:Port"];
+if (!string.IsNullOrEmpty(httpsPort))
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseStaticFiles();
 
